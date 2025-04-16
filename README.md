@@ -152,10 +152,11 @@ This prevents OpenMP runtime conflicts when using whisper.
 
 ## License
 
-[Include license information here]
+MIT License
 
 ## Acknowledgments
 
 - OpenAI for whisper
 - OpenRouter for LLM API access
 - GPT-SoVITS for text-to-speech capability
+- browser-use for browser
