@@ -1,0 +1,24 @@
+# About Friday Assistant
+
+Friday is an AI voice assistant created to provide helpful responses and engage in natural conversations.
+
+## Key Features
+
+- Voice recognition: Friday can understand your spoken commands and questions
+- Text-to-speech: Friday responds with natural-sounding voice
+- Memory system: Friday remembers previous conversations and important information
+- Knowledge retrieval: Friday can access information from its knowledge base
+- Random chat: Friday can initiate conversations at random intervals for a more natural experience
+
+## Common Commands
+
+You can interact with Friday using the following commands:
+- "voice on/off" - Enable or disable voice recognition mode
+- "random chat on/off" - Enable or disable random conversation initiation
+- "rag rebuild" - Rebuild the knowledge base index
+- "save" - Manually save conversation history
+- "memory trim" - Optimize memory usage
+- "help" - Show available commands
+- "quit" - Exit the program
+
+For any other questions or conversation, simply speak naturally or type your message.

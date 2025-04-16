@@ -1,0 +1,63 @@
+# Friday Assistant Configuration
+
+# LLM (Large Language Model) settings
+llm:
+  model: "qwen/qwen2.5-7b-instruct:free"  # Model name
+  api_key: ""  # Your OpenRouter API key
+  
+  # Ollama settings (optional)
+  use_ollama: false
+  ollama_model: "llama2"
+  ollama_host: "http://localhost:11434"
+
+# Memory management settings
+memory:
+  long_term_file: "long_term_memory.json"
+  short_term_file: "short_term_memory.json"
+  max_size: 20000  # Maximum number of entries to keep
+
+# Audio processing settings
+audio:
+  sample_rate: 16000
+  silence_threshold: 0.03
+  silence_duration: 0.5
+
+# Text-to-Speech settings
+tts:
+  service_path: ""  # Path to GPT-SoVITS directory
+  reference_wav: ""  # Path to reference audio file
+  gpt_model: ""  # Path to GPT model
+  sovits_model: ""  # Path to SoVITS model
+
+# RAG (Retrieval-Augmented Generation) settings
+rag:
+  knowledge_dir: "knowledge_base"
+  db_dir: "chroma_db"
+
+# Service integrations (optional)
+services:
+  # Weather service
+  weather:
+    enabled: false
+    api_key: ""  # OpenWeatherMap API key
+  
+  # Home Assistant integration
+  home_assistant:
+    enabled: false
+    base_url: "http://192.168.1.100:8123"
+    access_token: ""
+    device_map:
+      "living room light": "light.living_room"
+      "kitchen light": "light.kitchen"
+  
+  # Google Calendar integration
+  google_calendar:
+    enabled: false
+    credentials_path: "credentials.json"
+    token_path: "token.pickle"
+  
+  # Notes and reminders
+  notes:
+    enabled: false
+    notes_file: "notes.json"
+    reminders_file: "reminders.json"

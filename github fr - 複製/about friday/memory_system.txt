@@ -1,0 +1,50 @@
+# Friday's Memory System
+
+Friday uses a sophisticated memory system to remember conversations and important information, making interactions more natural and contextual.
+
+## Memory Types
+
+Friday has two types of memory:
+
+1. **Short-term Memory**
+   - Stores recent conversations temporarily
+   - Used for immediate context in the current session
+   - Saved in `short_term_memory.json`
+
+2. **Long-term Memory**
+   - Stores important information persistently
+   - Used for remembering critical details across sessions
+   - Saved in `long_term_memory.json`
+
+## Memory Prioritization
+
+Not all information is equally important. Friday assigns priority levels to memories:
+
+- **Priority 1 (Low)**: Basic exchanges and routine conversation
+- **Priority 2 (Medium)**: Useful information and moderate importance exchanges
+- **Priority 3 (High)**: Critical information, preferences, and important exchanges
+- **Priority 4 (Permanent)**: Essential information that should never be forgotten
+
+## Memory Consolidation
+
+Periodically, Friday consolidates short-term memories into long-term storage:
+
+1. Short-term memories are evaluated for importance
+2. Important memories are transferred to long-term storage
+3. Short-term memory is cleared for new conversations
+
+You can manually trigger this process with the `save` command.
+
+## Memory Optimization
+
+As long-term memory grows, Friday automatically optimizes it by:
+
+1. Identifying less important or older memories
+2. Removing redundant information
+3. Keeping the most relevant and important memories
+
+You can manually optimize memory with the `memory trim` command.
+
+## Privacy Note
+
+All memory is stored locally on your device. No conversation data is sent to external servers beyond what's required for processing individual messages. 

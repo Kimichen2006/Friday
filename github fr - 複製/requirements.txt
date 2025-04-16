@@ -1,0 +1,7 @@
+openai
+pyyaml
+sounddevice
+soundfile
+numpy
+requests
+whisper-openai

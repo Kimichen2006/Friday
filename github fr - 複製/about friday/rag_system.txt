@@ -1,0 +1,38 @@
+# Friday's RAG System
+
+RAG (Retrieval-Augmented Generation) is a system that allows Friday to access knowledge and provide more accurate, informative responses.
+
+## How RAG Works
+
+1. **Retrieval**: When you ask a question, Friday searches its knowledge base for relevant information.
+2. **Augmentation**: The retrieved information is used to enhance the AI's understanding of your query.
+3. **Generation**: The AI generates a response based on both its language model and the retrieved knowledge.
+
+## Knowledge Base
+
+The knowledge base is a collection of text files stored in the `knowledge_base/` directory. Each file contains information that Friday can access.
+
+You can add your own knowledge by:
+1. Creating a text file with a `.txt` extension
+2. Adding information in plain text format
+3. Placing the file in the `knowledge_base/` directory
+
+The system will automatically include this information when generating responses.
+
+## Customizing Knowledge
+
+For best results, organize your knowledge files by topic. For example:
+- `history.txt` for historical facts
+- `recipes.txt` for cooking information
+- `personal.txt` for information about yourself
+
+This organization helps Friday find the most relevant information for your questions.
+
+## Rebuilding the Knowledge Base
+
+If you add new knowledge files, you need to rebuild the knowledge base index using the command:
+```
+rag rebuild
+```
+
+This ensures Friday can access the newly added information. 
