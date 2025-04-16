@@ -1,5 +1,3 @@
-# Friday
-An intergeration of different models with new RAG memory system
 # Friday - Voice-Interactive AI Assistant
 
 Friday is a sophisticated, voice-interactive AI companion that uses Large Language Models (LLMs) and Text-to-Speech technology to create a natural conversational experience.
