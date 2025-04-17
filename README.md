@@ -14,8 +14,10 @@ Friday is a sophisticated, voice-interactive AI companion that uses Large Langua
 ## Requirements
 
 - Python 3.8 or higher
-- OpenRouter API key (for LLM access)
-- GPT-SoVITS for text-to-speech (optional)
+- OpenRouter API key
+- whisper for STT
+- browser-use is installed
+- GPT-SoVITS for text-to-speech 
 - At least 4GB RAM for running whisper models
 - Windows, macOS, or Linux
 
@@ -127,6 +129,8 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 This prevents OpenMP runtime conflicts when using whisper.
 
 ## Troubleshooting
+
+If the main code isn't working. Try the original code: in_case_it_did't_work.py. Run it after setting up the config in it.
 
 ### Common Issues
 
