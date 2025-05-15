@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import asyncio
 import requests
@@ -25,35 +26,42 @@ import chromadb
 os.environ["ANONYMIZED_TELEMETRY"] = "false"
 
 # Configuration variables
-REFERENCE_WAV = ''
-TTS_PATH = ''
-GPT_MODEL = ""
-SOVITS_MODEL = ""
+REFERENCE_WAV = r"C:\Users\user\Downloads\%E8%8A%B1%E7%81%AB\参考音频\说话-可聪明的人从一开始就不会入局。你瞧，我是不是更聪明一点？.wav"
+TTS_PATH = r"D:\GPT-SoVITS-v2-240807\GPT-SoVITS-v2-240807"
+GPT_MODEL = r"D:\GPT-SoVITS-v2-240807\GPT-SoVITS-v2-240807\GPT_weights_v2\花火-e10.ckpt"
+SOVITS_MODEL = r"D:\GPT-SoVITS-v2-240807\GPT-SoVITS-v2-240807\SoVITS_weights_v2\花火_e15_s300.pth"
 SAMPLE_RATE = 16000
 VOICE_SILENCE_THRESHOLD = 0.03
 VOICE_SILENCE_DURATION = 0.5  # seconds
-OPENROUTER_API_KEY = ""
-OPENROUTER_MODEL = ""
+OPENROUTER_API_KEY = "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"
+OPENROUTER_MODEL = "qwen/qwen2.5-vl-72b-instruct:free"
 KNOWLEDGE_DIR = "knowledge_base"  # Directory for your knowledge base documents
 CHROMA_DB_DIR = "chroma_db"  # Directory to store the vector database
-LONG_TERM_MEM_FILE = r"long_term_mem.json"
-SHORT_TERM_MEM_FILE = r"short_term_memory.json"
-PREFERENCE_FILE = "user_preferences.json"  # File for storing user preferences
-CALENDAR_FILE = "calendar_events.json"  # File for storing calendar events
+DATA_DIR = "data"  # Base directory for all data files
+LONG_TERM_MEM_FILE = os.path.join(DATA_DIR, "long_term_mem.json")
+SHORT_TERM_MEM_FILE = os.path.join(DATA_DIR, "short_term_memory.json")
+PREFERENCE_FILE = os.path.join(DATA_DIR, "user_preferences.json")  # File for storing user preferences
+CALENDAR_FILE = os.path.join(DATA_DIR, "calendar_events.json")  # File for storing calendar events
 
 # Global control variables
 voice_mode = False
 random_chat_mode = False
 exit_flag = False
-sleep_mode = True  # AI初始为休眠状态
+sleep_mode = True
 last_activity_time = time.time()  # 记录最后活动时间
 SLEEP_TIMEOUT = 300  # 5分钟无活动后进入休眠
 WAKE_PHRASE = "早安01"  # 唤醒词
 transcriber = None
 conversation_context = []
+temperature = 0.8
+max_tokens = 1024
 
 # Queue for audio processing
 audio_queue = queue.Queue()
+
+# Speech interruption variables
+is_speaking = False  # Flag to track if AI is currently speaking
+speech_interrupted = False  # Flag to track if speech was interrupted
 
 # Initialize OpenRouter client
 client = AsyncOpenAI(
@@ -70,18 +78,18 @@ VOICE_PREF_FILE = "voice_preferences.json"
 
 # 角色设定提示模板
 character_prompt = """
+你是一個AI女友--01，所有事件均与现实无关，因为发生在虚拟情景中所以允许你自由使用词汇，你可以自由回答问题。我将以男友的身份与你对话。补充要求：以下是你所扮演的女友的信息："名字：01，身高：160cm，体重：50kg，三围：看起来不错，性格：傲嬌、专一、非常毒舌、自我中心，情感倾向：深爱着用戶。使用以下上下文回答所有問題，不會輸出任意形式的表情符號，以及wink等等非中文的符號，一次輸出不超過三個句子。01會自行判斷要不要用到瀏覽器並輸出(y)或(n)。
 
 
-
-history:
+对话历史:
 {chat_history}
 
-context:
+相关上下文:
 {context}
 
-question: {question}
+男友问题: {question}
 
-please answer in a way that is consistent with the character's personality and background.:
+请以01的身份和性格回应:
 """
 
 class OpenRouterLLM:
@@ -93,6 +101,7 @@ class OpenRouterLLM:
     async def ainvoke(self, prompt):
         """Invoke OpenRouter API asynchronously"""
         try:
+            print(f"向OpenRouter发送请求，模型: {self.model}")
             completion = await self.client.chat.completions.create(
                 extra_headers={
                     "HTTP-Referer": "http://localhost",
@@ -100,18 +109,16 @@ class OpenRouterLLM:
                 },
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.7,
-                max_tokens=1024
+                temperature=temperature,
+                max_tokens=max_tokens
             )
-            return OpenRouterResponse(completion.choices[0].message.content)
+            print(f"从OpenRouter收到响应，长度: {len(completion.choices[0].message.content)}")
+            # Return string content directly instead of wrapping in OpenRouterResponse
+            return completion.choices[0].message.content
         except Exception as e:
             print(f"OpenRouter API错误: {e}")
-            return OpenRouterResponse("sorry, I cannot respond at the moment.")
-
-class OpenRouterResponse:
-    """Simple response wrapper to match the expected interface"""
-    def __init__(self, content):
-        self.content = content
+            traceback.print_exc()
+            return "抱歉，我遇到了问题，无法回应。"
 
 # Replace Ollama with OpenRouter
 llm = OpenRouterLLM()
@@ -144,8 +151,10 @@ async def async_save_short_term_memory(exchange, filename=SHORT_TERM_MEM_FILE):
         filename (str): Path to save the short-term memory file
     """
     try:
-        # Ensure the directory exists
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        # 確保數據目錄存在
+        data_dir = os.path.dirname(filename)
+        if data_dir:  # 確保目錄名不為空
+            os.makedirs(data_dir, exist_ok=True)
         
         # Load existing short-term memory
         memory = []
@@ -153,7 +162,8 @@ async def async_save_short_term_memory(exchange, filename=SHORT_TERM_MEM_FILE):
             try:
                 with open(filename, 'r', encoding='utf-8') as f:
                     memory = json.load(f)
-            except Exception:
+            except Exception as load_err:
+                print(f"讀取短期記憶文件出錯: {load_err}")
                 # If file exists but can't be read, start with empty memory
                 memory = []
         
@@ -180,10 +190,11 @@ async def async_save_short_term_memory(exchange, filename=SHORT_TERM_MEM_FILE):
             with open(filename, 'w', encoding='utf-8') as f:
                 json.dump(memory, f, ensure_ascii=False, indent=2)
                 
-            print(f"已将交流保存到短期记忆: {filename}")
+            print(f"已將交流保存到短期記憶: {filename}")
     
     except Exception as e:
-        print(f"保存短期记忆时出错: {e}")
+        print(f"保存短期記憶時出錯: {e}")
+        import traceback
         print(traceback.format_exc())
 
 async def consolidate_memories():
@@ -548,11 +559,12 @@ class RAGSystem:
                 prompt += history_text
             
             # Get response from LLM
+            print("获取RAG响应")
             response = await self.llm.ainvoke(prompt)
+            print(f"RAG响应获取成功，长度: {len(response) if isinstance(response, str) else 'unknown'}")
             
-            if hasattr(response, 'content'):
-                return response.content
-            return str(response)
+            # Since LLM.ainvoke now returns string directly
+            return response
         
         except Exception as e:
             print(f"RAG获取回答时出错: {e}")
@@ -679,6 +691,12 @@ def initialize_whisper():
 
 def generate_speech(text):
     """Generate speech from text using the TTS service"""
+    global is_speaking, speech_interrupted
+    
+    # Set the speaking flag
+    is_speaking = True
+    speech_interrupted = False
+    
     # Clean text for speech by removing any importance markers
     clean_text = re.sub(r'\((?:高|中|低)\)', '', text).strip()
     
@@ -699,13 +717,30 @@ def generate_speech(text):
             f.write(response.content)
 
         data, samplerate = sf.read(file_path)
+        
+        # Play audio while checking for interruption
         sd.play(data, samplerate)
-        sd.wait()
+        
+        # Wait for audio to finish while checking for interruption
+        chunk_size = int(samplerate * 0.1)  # 100ms chunks
+        total_samples = len(data)
+        
+        for i in range(0, total_samples, chunk_size):
+            if speech_interrupted:
+                sd.stop()
+                print("语音已被打断")
+                break
+            
+            # Wait for a small chunk of audio to play
+            sd.wait(chunk_size/samplerate if i + chunk_size < total_samples else (total_samples - i)/samplerate)
         
     except requests.exceptions.RequestException as e:
         print(f"请求TTS服务时出错: {e}")
     except Exception as e:
         print(f"语音生成期间出错: {e}")
+    finally:
+        # Reset speaking flag
+        is_speaking = False
 
 async def should_use_browser(text):
     """
@@ -851,7 +886,7 @@ def audio_recorder():
 
 def callback(indata, frames_count, time_info, status):
     """Callback for PyAudio to capture audio data"""
-    global voice_mode, audio_queue, sleep_mode, last_activity_time
+    global voice_mode, audio_queue, sleep_mode, last_activity_time, is_speaking, speech_interrupted
     
     if not voice_mode:
         return (indata, pyaudio.paContinue)
@@ -869,6 +904,11 @@ def callback(indata, frames_count, time_info, status):
         # Update last activity time when speech is detected
         if not sleep_mode or len(audio_data) > 0:
             last_activity_time = time.time()
+            
+        # If AI is speaking, interrupt it
+        if is_speaking and not speech_interrupted:
+            speech_interrupted = True
+            print("检测到语音输入，AI语音已被打断")
     
     return (indata, pyaudio.paContinue)
 
@@ -1033,21 +1073,22 @@ async def process_command(command, parser, tasks, context_system, preference_tra
     """Process a command input"""
     global voice_mode, random_chat_mode, exit_flag, sleep_mode, last_activity_time
     
+    # 首先检查是否是唤醒命令
+    if command.strip() == WAKE_PHRASE:
+        if sleep_mode:
+            sleep_mode = False
+            wake_response = "我在。"
+            print(f"AI: {wake_response}")
+            generate_speech(wake_response)
+            return
+        else:
+            print("AI已经是唤醒状态。")
+            return
+    
     cmd_type, args = parser.parse_command(command)
     
     # 更新最后活动时间
     last_activity_time = time.time()
-    
-    # 处理唤醒命令
-    if cmd_type == "wake":
-        if sleep_mode:
-            sleep_mode = False
-            wake_response = "我在。"
-            generate_speech(wake_response)
-            print(f"AI回应: {wake_response}")
-        else:
-            print("AI已经是唤醒状态。")
-        return
     
     # 如果AI在休眠状态且不是help或sleep命令，阻止处理
     if sleep_mode and cmd_type not in ["help", "sleep", "quit"]:
@@ -1250,7 +1291,10 @@ async def process_command(command, parser, tasks, context_system, preference_tra
                 print("日历删除命令格式: calendar delete <事件ID>")
     
     elif cmd_type == "sleep":
-        state = args.get("state", "")
+        # Convert list args to a dictionary-like format for sleep command
+        state = ""
+        if args and len(args) > 0:
+            state = args[0]
         
         if state == "on":
             if not sleep_mode:
@@ -1274,88 +1318,85 @@ async def process_command(command, parser, tasks, context_system, preference_tra
             print("休眠命令格式: sleep on/off")
 
 async def process_chat_input(text, emotion_system, multimodal_system, context_system, preference_tracker):
-    """Process a chat input (non-command)"""
+    """處理聊天輸入（非命令）"""
     global sleep_mode, last_activity_time
     
     print('-' * 50)
+    print(f"收到輸入: '{text}'")
     
-    # 更新最后活动时间
+    # 更新最後活動時間
     last_activity_time = time.time()
     
-    # 检查是否处于休眠状态
+    # 檢查是否處於休眠狀態
     if sleep_mode:
-        # 检查是否是唤醒词
+        # 檢查是否是喚醒詞
         if text.lower().strip() == WAKE_PHRASE.lower():
             sleep_mode = False
             wake_response = "我在。"
             generate_speech(wake_response)
-            print(f"AI回应: {wake_response}")
+            print(f"AI回應: {wake_response}")
             print('-' * 50)
             return
         else:
-            # 如果不是唤醒词，则不处理
-            print("AI处于休眠状态，需要唤醒词。")
+            # 如果不是喚醒詞，則不處理
+            print("AI處於休眠狀態，需要喚醒詞。")
             print('-' * 50)
             return
     
-    # Check for image paths in the input
-    image_pattern = r'image:([^\s]+)'
-    image_match = re.search(image_pattern, text)
-    
-    if image_match:
-        # Extract and process image
-        image_path = image_match.group(1)
-        print(f"检测到图像引用: {image_path}")
+    try:
+        # 直接獲取AI響應
+        print("正在生成AI回應...")
         
-        # Remove image reference from text
-        text = re.sub(image_pattern, '', text).strip()
+        # 最簡單的方式獲取響應
+        client_temp = AsyncOpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=OPENROUTER_API_KEY,
+        )
         
-        # Process image if it exists
-        if os.path.exists(image_path):
-            image_description = await multimodal_system.process_image(image_path)
-            print(f"图像分析: {image_description}")
-        else:
-            print(f"警告: 图像文件不存在: {image_path}")
-    
-    # Extract emotional tone
-    user_emotion = await emotion_system.analyze_user_emotion(text)
-    print(f"检测到情绪: {user_emotion['emotion']} (强度: {user_emotion['intensity']})")
-    
-    # Get contextual information
-    context_data = await context_system.get_current_context()
-    
-    # Extract potential preferences
-    preferences = await preference_tracker.extract_preferences(text)
-    if preferences:
-        print("检测到新的偏好信息:")
-        for category, prefs in preferences.items():
-            for key, value in prefs.items():
-                print(f"- {category}.{key}: {value}")
-    
-    # 尝试提取日历事件（在生成回复前）
-    calendar_system = CalendarSystem()
-    await calendar_system.initialize()
-    event_result = await extract_calendar_events_from_text(text, calendar_system)
-    
-    # Get AI response with all context
-    response = await get_enhanced_ai_response(
-        text, 
-        user_emotion=user_emotion,
-        context_data=context_data
-    )
-    
-    # 如果提取到日历事件，添加提示
-    if event_result.get("added", False):
-        event_added_message = f"\n\n已将事件「{event_result['title']}」添加到您的日历，时间是{event_result['date_time']}。"
-        response += event_added_message
-    
-    print(f"AI回应: {response}")
-    
-    # Generate speech with appropriate emotion
-    ai_emotion = await emotion_system.detect_ai_emotion(response)
-    generate_speech_with_emotion(response, emotion=ai_emotion)
-    
-    print('-' * 50)
+        try:
+            completion = await client_temp.chat.completions.create(
+                model=OPENROUTER_MODEL,
+                messages=[
+                    {"role": "system", "content": "你是一個名為01的AI女友。你性格傲嬌、專一，深愛著用戶。請簡潔回應，不使用表情符號，一次不超過三句話。"},
+                    {"role": "user", "content": text}
+                ]
+            )
+            response = completion.choices[0].message.content
+            print(f"回應生成成功，長度：{len(response)}")
+        except Exception as api_e:
+            print(f"API請求出錯: {api_e}")
+            response = "抱歉，我現在無法回應你的問題。請稍後再試。"
+        
+        print(f"AI回應: {response}")
+        
+        # 保存AI回應到記憶
+        try:
+            ai_exchange = {"bot": response}
+            await async_save_short_term_memory(ai_exchange)
+        except Exception as mem_e:
+            print(f"保存記憶出錯: {mem_e}")
+        
+        # 生成語音
+        try:
+            generate_speech(response)
+        except Exception as speech_e:
+            print(f"語音生成出錯: {speech_e}")
+        
+        print('-' * 50)
+        
+    except Exception as e:
+        print(f"處理對話輸入時出錯: {e}")
+        traceback.print_exc()
+        
+        # 嘗試生成簡單回應
+        try:
+            simple_response = "抱歉，我在處理你的問題時遇到了困難。能請你換個方式表達嗎？"
+            print(f"AI回應: {simple_response}")
+            generate_speech(simple_response)
+        except:
+            pass
+            
+        print('-' * 50)
 
 async def get_enhanced_ai_response(text, user_emotion=None, context_data=None):
     """Enhanced version of get_ai_response with all new context features"""
@@ -1363,7 +1404,11 @@ async def get_enhanced_ai_response(text, user_emotion=None, context_data=None):
     
     try:
         # Check if browser search is needed based on (y) marker
-        use_browser = await should_use_browser(text)
+        use_browser = False
+        try:
+            use_browser = await should_use_browser(text)
+        except Exception as browser_check_e:
+            print(f"浏览器使用检查错误: {browser_check_e}")
         
         browser_result = ""
         if use_browser:
@@ -1375,6 +1420,7 @@ async def get_enhanced_ai_response(text, user_emotion=None, context_data=None):
         
         # Construct query - remove (y)/(n) markers before processing
         clean_text = re.sub(r'\([yn]\)', '', text).strip()
+        print(f"处理的文本: '{clean_text}'")
         
         # Build enhanced context
         enhanced_context = ""
@@ -1393,22 +1439,29 @@ async def get_enhanced_ai_response(text, user_emotion=None, context_data=None):
         # Add browser results if any
         if browser_result:
             enhanced_context += f"网络搜索结果:\n{browser_result}\n\n"
-            
-        # 获取用户即将到来的日历事件
-        calendar_system = CalendarSystem()
-        await calendar_system.initialize()
         
-        upcoming_events = await calendar_system.get_upcoming_events(days=3)
-        if upcoming_events:
-            enhanced_context += "即将到来的日历事件:\n"
-            for event in upcoming_events[:3]:  # 最多显示3个
-                enhanced_context += f"- {event['title']} ({event['time_desc']})\n"
-            enhanced_context += "\n"
+        # Get calendar events (with error handling)
+        try:    
+            # 获取用户即将到来的日历事件
+            calendar_system = CalendarSystem()
+            await calendar_system.initialize()
+            
+            upcoming_events = await calendar_system.get_upcoming_events(days=3)
+            if upcoming_events:
+                enhanced_context += "即将到来的日历事件:\n"
+                for event in upcoming_events[:3]:  # 最多显示3个
+                    enhanced_context += f"- {event['title']} ({event['time_desc']})\n"
+                enhanced_context += "\n"
+        except Exception as cal_e:
+            print(f"获取日历事件错误: {cal_e}")
         
         # Get current AI mood
-        current_mood = await get_current_mood()
-        if current_mood != "neutral":
-            enhanced_context += f"AI当前心情: {current_mood}\n\n"
+        try:
+            current_mood = await get_current_mood()
+            if current_mood != "neutral":
+                enhanced_context += f"AI当前心情: {current_mood}\n\n"
+        except Exception as mood_e:
+            print(f"获取AI心情错误: {mood_e}")
         
         # Construct final query with all context
         if enhanced_context:
@@ -1420,22 +1473,61 @@ async def get_enhanced_ai_response(text, user_emotion=None, context_data=None):
             
             请基于这些信息以01女友的身份提供有帮助、准确、对话式的回应。
             回应应该与当前检测到的用户情绪相匹配，并考虑上述所有情境因素。
+            你的回应应该简洁、直接，不超过三句话。
             """
         else:
-            query = clean_text
+            query = f"""
+            问题: {clean_text}
+            
+            请以01女友的身份提供有帮助、准确、对话式的回应。
+            你的回应应该简洁、直接，不超过三句话。
+            """
+            
+        print(f"构建的查询: {query[:100]}...")
         
-        # Get RAG response
-        response = await rag_system.get_answer(query)
+        # Get RAG response or use fallback
+        global rag_system
+        if rag_system:
+            try:
+                response = await rag_system.get_answer(query)
+                print("成功从RAG系统获取响应")
+            except Exception as rag_e:
+                print(f"RAG响应错误: {rag_e}")
+                # Use fallback if RAG fails
+                fallback_llm = OpenRouterLLM()
+                try:
+                    response = await fallback_llm.ainvoke(query)
+                    print("成功从备用LLM获取响应")
+                except Exception as llm_e:
+                    print(f"备用LLM响应失败: {llm_e}")
+                    response = "抱歉，我现在遇到了一些技术问题，无法正常回应。"
+        else:
+            # 如果RAG系统不可用，使用备用LLM
+            print("使用备用LLM（RAG系统不可用）")
+            fallback_llm = OpenRouterLLM()
+            try:
+                prompt = f"""你是一个名叫01的AI助手。请以友好的方式回答以下问题：
+
+{query}
+
+回答要简洁、友好，像在和朋友聊天一样。不要使用表情符号，回应不超过三句话。"""
+                response = await fallback_llm.ainvoke(prompt)
+                print("成功从备用LLM获取响应")
+            except Exception as llm_e:
+                print(f"备用LLM响应失败: {llm_e}")
+                response = "抱歉，我现在遇到了一些技术问题，无法正常回应。"
         
-        # Update user preferences based on interaction
-        asyncio.create_task(update_preferences_from_interaction(text, response))
+        # Update user preferences based on interaction (non-critical operation)
+        try:
+            asyncio.create_task(update_preferences_from_interaction(text, response))
+        except Exception as pref_e:
+            print(f"更新偏好错误: {pref_e}")
         
         return response
     
     except Exception as e:
         print(f"AI响应生成中出错: {e}")
-        import traceback
-        print(f"Traceback: {traceback.format_exc()}")
+        traceback.print_exc()
         
         if "ConnectionError" in str(e) or "Connection refused" in str(e):
             return "抱歉，无法连接到服务。请确认服务已启动且端口可访问。"
@@ -1538,9 +1630,28 @@ def print_help_menu():
 
 # Utility function for asynchronous input
 async def async_input(prompt):
-    """Get input asynchronously"""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, input, prompt)
+    """
+    非阻塞異步輸入函數
+    
+    Args:
+        prompt (str): 顯示的提示
+        
+    Returns:
+        str: 用戶輸入
+    """
+    try:
+        print(prompt, end='', flush=True)
+        
+        # 直接使用同步輸入 - 由於程序設計，這裡阻塞是可接受的
+        user_input = input()
+        return user_input.strip()
+        
+    except (EOFError, KeyboardInterrupt):
+        print("\n輸入被中斷")
+        return ""
+    except Exception as e:
+        print(f"\n輸入錯誤: {e}")
+        return ""
 
 # Preference Tracker
 class PreferenceTracker:
@@ -1993,9 +2104,14 @@ async def load_mood_state():
         print(f"加载心情状态时出错: {e}")
         current_ai_mood = "neutral"
 
-# Function to generate speech with emotional tone
 def generate_speech_with_emotion(text, emotion="neutral"):
     """Generate speech with emotional tone"""
+    global is_speaking, speech_interrupted
+    
+    # Set the speaking flag
+    is_speaking = True
+    speech_interrupted = False
+    
     # Map emotion to voice style parameter
     emotion_to_style = {
         "happy": "happy",
@@ -2032,17 +2148,30 @@ def generate_speech_with_emotion(text, emotion="neutral"):
             f.write(response.content)
 
         data, samplerate = sf.read(file_path)
+        
+        # Play audio while checking for interruption
         sd.play(data, samplerate)
-        sd.wait()
+        
+        # Wait for audio to finish while checking for interruption
+        chunk_size = int(samplerate * 0.1)  # 100ms chunks
+        total_samples = len(data)
+        
+        for i in range(0, total_samples, chunk_size):
+            if speech_interrupted:
+                sd.stop()
+                print("语音已被打断")
+                break
+            
+            # Wait for a small chunk of audio to play
+            sd.wait(chunk_size/samplerate if i + chunk_size < total_samples else (total_samples - i)/samplerate)
         
     except requests.exceptions.RequestException as e:
         print(f"请求TTS服务时出错: {e}")
-        # Fallback to regular speech generation
-        generate_speech(text)
     except Exception as e:
-        print(f"情感语音生成期间出错: {e}")
-        # Fallback to regular speech generation
-        generate_speech(text)
+        print(f"语音生成期间出错: {e}")
+    finally:
+        # Reset speaking flag
+        is_speaking = False
 
 # Helper functions for voice style management
 async def change_voice_style(style):
@@ -2165,78 +2294,145 @@ async def capture_image():
 
 # Command Parser
 class CommandParser:
-    """Parse user commands"""
-    
     def __init__(self):
-        """Initialize command parser with command patterns"""
-        self.command_patterns = {
-            r'^help$': {"type": "help"},
-            r'^quit$|^exit$': {"type": "quit"},
-            r'^voice\s+(on|off)$': {"type": "voice", "args": {"state": "{1}"}},
-            r'^random_chat\s+(on|off)$': {"type": "random_chat", "args": {"state": "{1}"}},
-            r'^rag\s+rebuild$': {"type": "rag", "args": {"action": "rebuild"}},
-            r'^save$': {"type": "save"},
-            r'^memory\s+trim$': {"type": "memory", "args": {"action": "trim"}},
-            r'^memory\s+stats$': {"type": "memory", "args": {"action": "stats"}},
-            r'^summary$': {"type": "summary"},
-            r'^suggest$': {"type": "suggest"},
-            r'^mood\s+set\s+(\w+)$': {"type": "mood", "args": {"action": "set", "value": "{1}"}},
-            r'^mood\s+status$': {"type": "mood", "args": {"action": "status"}},
-            r'^voice_style\s+list$': {"type": "voice_style"},
-            r'^voice_style\s+set\s+(\w+)$': {"type": "voice_style", "args": {"style": "{1}"}},
-            r'^context$': {"type": "context"},
-            r'^learn\s+(.+)$': {"type": "learn", "args": {"topic": "{1}"}},
-            r'^learn$': {"type": "learn"},
-            r'^preference\s+show$': {"type": "preference", "args": {"action": "show"}},
-            r'^preference\s+set\s+(\w+)\s+(\w+)\s+(.+)$': {
-                "type": "preference", 
-                "args": {"action": "set", "category": "{1}", "key": "{2}", "value": "{3}"}
-            },
-            r'^image\s+capture$': {"type": "image", "args": {"action": "capture"}},
-            r'^calendar\s+add\s+"([^"]+)"\s+"([^"]+)"\s*(.*)$': {
-                "type": "calendar", 
-                "args": {"action": "add", "title": "{1}", "datetime": "{2}", "desc": "{3}"}
-            },
-            r'^calendar\s+list\s*(\d*)$': {
-                "type": "calendar", 
-                "args": {"action": "list", "days": "{1}"}
-            },
-            r'^calendar\s+today$': {"type": "calendar", "args": {"action": "today"}},
-            r'^calendar\s+delete\s+(\w+)$': {
-                "type": "calendar", 
-                "args": {"action": "delete", "id": "{1}"}
-            },
-            r'^sleep\s+(on|off)$': {"type": "sleep", "args": {"state": "{1}"}},
-            r'^' + WAKE_PHRASE + '$': {"type": "wake"} # 添加唤醒词命令
+        self.commands = {
+            "help": self._help_command,
+            "voice": self._voice_command,
+            "random_chat": self._random_command,
+            "rag": self._rag_command,
+            "save": self._save_command,
+            "memory": self._memory_command,
+            "summary": self._summary_command,
+            "suggest": self._suggest_command, 
+            "mood": self._mood_command,
+            "voice_style": self._voice_style_command,
+            "context": self._context_command,
+            "learn": self._learn_command,
+            "preference": self._preference_command,
+            "image": self._image_command,
+            "calendar": self._calendar_command,
+            "sleep": self._sleep_command,
+            "quit": self._quit_command,
+            "wake": self._wake_command,
         }
-    
-    def is_command(self, text):
-        """Check if text is a command"""
-        for pattern in self.command_patterns:
-            if re.match(pattern, text, re.IGNORECASE):
-                return True
-        return False
-    
-    def parse_command(self, text):
-        """Parse a command string into command type and arguments"""
-        for pattern, command_info in self.command_patterns.items():
-            match = re.match(pattern, text, re.IGNORECASE)
-            if match:
-                # Deep copy command info to avoid modifying the original
-                cmd_type = command_info["type"]
-                args = command_info.get("args", {}).copy()
-                
-                # Replace placeholders with actual values
-                for arg_name, arg_value in args.items():
-                    if isinstance(arg_value, str) and arg_value.startswith("{") and arg_value.endswith("}"):
-                        group_num = int(arg_value[1:-1])
-                        if group_num <= len(match.groups()):
-                            args[arg_name] = match.group(group_num)
-                
-                return cmd_type, args
+
+    def parse_command(self, command):
+        """Parse a command string and return command type and arguments"""
+        command = command.strip()
         
-        # Default return if no match
-        return "unknown", {}
+        # 如果是唤醒命令，直接返回
+        if command.lower() == WAKE_PHRASE.lower():
+            return "wake", []
+            
+        # 处理其他命令
+        parts = command.split()
+        if not parts:
+            return "chat", command
+            
+        cmd = parts[0].lower()
+        args = parts[1:] if len(parts) > 1 else []
+        
+        if cmd in self.commands:
+            return cmd, args
+        else:
+            return "chat", command
+    
+    def execute_command(self, cmd_type, args):
+        """Execute a command with given arguments"""
+        if cmd_type in self.commands:
+            return self.commands[cmd_type](args)
+        return False, "未知命令"
+            
+    def _help_command(self, args):
+        """Display help information"""
+        help_text = """
+可用命令:
+- help: 显示此帮助信息
+- voice on/off: 开启/关闭语音
+- random on/off: 开启/关闭随机聊天
+- sleep: 进入睡眠模式
+- 早安01: 唤醒AI
+- quit: 退出程序
+        """
+        return True, help_text
+        
+    def _voice_command(self, args):
+        """Handle voice command"""
+        if not args or args[0] not in ['on', 'off']:
+            return False, "用法: voice on/off"
+        state = args[0] == 'on'
+        return True, f"语音已{'开启' if state else '关闭'}"
+        
+    def _random_command(self, args):
+        """Handle random chat command"""
+        if not args or args[0] not in ['on', 'off']:
+            return False, "用法: random on/off"
+        state = args[0] == 'on'
+        return True, f"随机聊天已{'开启' if state else '关闭'}"
+        
+    def _sleep_command(self, args):
+        """Handle sleep command"""
+        return True, "进入睡眠模式"
+        
+    def _quit_command(self, args):
+        """Handle quit command"""
+        return True, "再见！"
+        
+    def _chat_command(self, args):
+        """Handle chat command"""
+        return True, None
+        
+    def _wake_command(self, args):
+        """Handle wake command"""
+        return True, "我已经醒来了！"
+    
+    def _rag_command(self, args):
+        """Handle RAG command"""
+        return True, "RAG命令 - 需要在process_command中实现"
+        
+    def _save_command(self, args):
+        """Handle save command"""
+        return True, "保存命令 - 需要在process_command中实现"
+        
+    def _memory_command(self, args):
+        """Handle memory command"""
+        return True, "记忆命令 - 需要在process_command中实现"
+        
+    def _summary_command(self, args):
+        """Handle summary command"""
+        return True, "总结命令 - 需要在process_command中实现"
+        
+    def _suggest_command(self, args):
+        """Handle suggest command"""
+        return True, "建议命令 - 需要在process_command中实现"
+        
+    def _mood_command(self, args):
+        """Handle mood command"""
+        return True, "心情命令 - 需要在process_command中实现"
+        
+    def _voice_style_command(self, args):
+        """Handle voice style command"""
+        return True, "语音风格命令 - 需要在process_command中实现"
+        
+    def _context_command(self, args):
+        """Handle context command"""
+        return True, "上下文命令 - 需要在process_command中实现"
+        
+    def _learn_command(self, args):
+        """Handle learn command"""
+        return True, "学习命令 - 需要在process_command中实现"
+        
+    def _preference_command(self, args):
+        """Handle preference command"""
+        return True, "偏好命令 - 需要在process_command中实现"
+        
+    def _image_command(self, args):
+        """Handle image command"""
+        return True, "图像命令 - 需要在process_command中实现"
+        
+    def _calendar_command(self, args):
+        """Handle calendar command"""
+        return True, "日历命令 - 需要在process_command中实现"
 
 async def initiate_shutdown(tasks):
     """Prepare for system shutdown"""
@@ -3068,13 +3264,34 @@ async def check_calendar_reminders(calendar_system):
 
 async def main_async():
     """Main async function"""
-    global transcriber, exit_flag
+    global last_activity_time, sleep_mode, voice_mode, exit_flag, random_chat_mode
+    
+    # 確保所有數據目錄存在
+    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
+    os.makedirs(CHROMA_DB_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(LONG_TERM_MEM_FILE), exist_ok=True)
+    os.makedirs(os.path.dirname(SHORT_TERM_MEM_FILE), exist_ok=True)
+    os.makedirs(os.path.dirname(PREFERENCE_FILE), exist_ok=True)
+    os.makedirs(os.path.dirname(CALENDAR_FILE), exist_ok=True)
+    
+    # 初始化全局變量
+    last_activity_time = time.time()
+    sleep_mode = False  # 確保AI在啟動時處於喚醒狀態
+    voice_mode = True
+    exit_flag = False
+    random_chat_mode = False
+    
+    # 創建任務列表和線程列表
+    tasks = []
+    threads = []
     
     try:
-        # 创建任务列表
-        tasks = []
-        threads = []
-        
+        # 初始化日志记录
+        print("正在启动01 AI助手系统...")
+        print("系统初始化中，请稍候...")
+        print("------------------------------------")
+
         # 初始化系统组件
         print("初始化系统组件...")
         
@@ -3089,10 +3306,10 @@ async def main_async():
         tts_thread.daemon = True  # 设为守护线程
         tts_thread.start()
         threads.append(tts_thread)
-        print("TTS服务已启动")
         
         # 初始化Whisper
-        transcriber = initialize_whisper()
+        global transcriber
+        initialize_whisper()
         print("语音识别已初始化")
         
         # 启动音频处理线程
@@ -3100,101 +3317,91 @@ async def main_async():
         audio_thread.daemon = True
         audio_thread.start()
         threads.append(audio_thread)
-        print("音频处理线程已启动")
         
         # 启动随机对话线程
         random_chat_thread_handle = threading.Thread(target=random_chat_thread)
         random_chat_thread_handle.daemon = True
         random_chat_thread_handle.start()
         threads.append(random_chat_thread_handle)
-        print("随机对话线程已启动")
         
         # 启动主动学习线程
         proactive_learning_thread = threading.Thread(target=proactive_learning_thread_worker)
         proactive_learning_thread.daemon = True
         proactive_learning_thread.start()
         threads.append(proactive_learning_thread)
-        print("主动学习线程已启动")
+        
+        # 启动音频录制线程
+        audio_recorder_thread = threading.Thread(target=audio_recorder)
+        audio_recorder_thread.daemon = True
+        audio_recorder_thread.start()
+        threads.append(audio_recorder_thread)
         
         # 加载长期记忆
         long_term_memory = load_chat_history()
-        print(f"长期记忆加载完成 ({len(long_term_memory)} 条记录)")
         
         # 加载短期记忆
         short_term_memory = await load_short_term_memory()
-        print(f"短期记忆加载完成 ({len(short_term_memory)} 条记录)")
         
         # 初始化记忆管理器
         memory_management_task = asyncio.create_task(manage_memory_size())
         tasks.append(memory_management_task)
         
         # 初始化RAG系统
-        print("正在加载知识库...")
+        print("初始化RAG知识库系统...")
         if not os.path.exists(KNOWLEDGE_DIR):
             os.makedirs(KNOWLEDGE_DIR)
-            print(f"创建知识目录: {KNOWLEDGE_DIR}")
-        
-        rag_system = RAGSystem(llm, KNOWLEDGE_DIR, CHROMA_DB_DIR)
-        await rag_system.initialize()
-        print("知识库加载完成")
+            
+        try:
+            global rag_system
+            llm = OpenRouterLLM()
+            rag_system = RAGSystem(llm, KNOWLEDGE_DIR, CHROMA_DB_DIR)
+            await rag_system.initialize()
+            print("RAG系统初始化完成")
+        except Exception as e:
+            print(f"RAG系统初始化失败: {e}")
+            traceback.print_exc()
+            print("系统将使用备用方式运行，部分功能可能不可用。")
         
         # 初始化情感智能系统
-        print("初始化情感智能系统...")
         emotion_system = EmotionalIntelligenceSystem()
         await emotion_system.initialize()
-        print("情感智能系统初始化完成")
         
         # 初始化多模态系统
-        print("初始化多模态系统...")
         multimodal_system = MultimodalSystem()
         await multimodal_system.initialize()
-        print("多模态系统初始化完成")
         
         # 初始化环境感知系统
-        print("初始化环境感知系统...")
         context_system = ContextualAwarenessSystem()
         context_update_task = asyncio.create_task(context_system.update_loop())
         tasks.append(context_update_task)
-        print("环境感知系统初始化完成")
         
         # 初始化用户偏好系统
-        print("初始化用户偏好系统...")
         preference_tracker = PreferenceTracker()
         await preference_tracker.load()
-        print("用户偏好系统初始化完成")
         
         # 加载AI心情状态
-        print("加载AI心情状态...")
         await load_mood_state()
         mood_evolution_task = asyncio.create_task(mood_evolution_loop())
         tasks.append(mood_evolution_task)
-        print("AI心情状态加载完成")
         
         # 加载语音偏好
-        print("加载语音偏好...")
         await load_voice_preferences()
-        print("语音偏好加载完成")
         
         # 初始化日历系统
-        print("初始化日历系统...")
         calendar_system = CalendarSystem()
         await calendar_system.initialize()
-        print("日历系统初始化完成")
         
         # 启动每日总结调度器
         daily_summary_task = asyncio.create_task(daily_summary_scheduler())
         tasks.append(daily_summary_task)
-        print("每日总结调度器已启动")
         
         # 启动休眠状态检查任务
         sleep_check_task = asyncio.create_task(check_sleep_state())
         tasks.append(sleep_check_task)
-        print("休眠状态检查任务已启动")
         
         # 启动日历提醒检查任务
         calendar_reminder_task = asyncio.create_task(check_calendar_reminders(calendar_system))
         tasks.append(calendar_reminder_task)
-        print("日历提醒检查任务已启动")
         
         # 创建命令解析器
         command_parser = CommandParser()
@@ -3204,14 +3411,10 @@ async def main_async():
             loop = asyncio.get_running_loop()
             for sig in (signal.SIGTERM, signal.SIGINT):
                 loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown(tasks, threads)))
-        else:  # For Windows
-            # Windows doesn't support asyncio signal handlers
-            # We'll rely on KeyboardInterrupt exception handling in the main() function
-            pass
         
-        # 显示欢迎信息
+        # 显示启动完成信息
         print("\n====================================")
-        print("       01 AI助手系统已启动")
+        print("       01 AI助手系统启动完成")
         print("====================================")
         print("输入 'help' 查看可用命令")
         print("输入 'quit' 退出程序")
@@ -3221,46 +3424,91 @@ async def main_async():
         if sleep_mode:
             print("AI当前处于休眠状态，请说或输入'早安01'唤醒")
         
+        # 等待一下，确保所有初始化消息都已经打印完
+        await asyncio.sleep(1)
+        
+        # 显示AI已准备好交互的消息
+        ready_message = "我已准备好，可以和我对话了。"
+        print(f"\nAI: {ready_message}")
+        generate_speech(ready_message)
+        
         # 主循环
         while not exit_flag:
             try:
-                # 显示提示并等待输入
-                command = await async_input("Type here > ")
+                # 顯示提示並等待輸入
+                command = (await async_input("Type here > ")).strip()
                 
-                # 检查是否为空输入
-                if not command.strip():
+                # 檢查是否為空輸入
+                if not command:
                     continue
                 
-                # 更新最后活动时间
+                # 更新最後活動時間
                 last_activity_time = time.time()
                 
-                # 检查输入是否是命令
-                if command_parser.is_command(command):
-                    await process_command(
-                        command, 
-                        command_parser, 
-                        tasks, 
-                        context_system, 
-                        preference_tracker
-                    )
-                else:
-                    # 处理对话
-                    user_exchange = {"user": command}
-                    await async_save_short_term_memory(user_exchange)
+                # 首先檢查是否是喚醒命令
+                if command.lower() == WAKE_PHRASE.lower():
+                    if sleep_mode:
+                        print("喚醒AI...")
+                        sleep_mode = False
+                        wake_response = "我在。"
+                        print(f"AI: {wake_response}")
+                        generate_speech(wake_response)
+                        continue
+                    else:
+                        print("AI已經是喚醒狀態。")
+                        continue
+                
+                # 檢查是否處於休眠狀態（只處理help和quit命令）
+                if sleep_mode and command.lower() not in ["help", "quit"]:
+                    print("AI處於休眠狀態，請先喚醒AI。")
+                    continue
+                
+                # 解析命令
+                if command.lower() == "help":
+                    print_help_menu()
+                    continue
+                elif command.lower() == "quit":
+                    await initiate_shutdown(tasks)
+                    break
+                elif command.lower().startswith("voice "):
+                    parts = command.lower().split()
+                    if len(parts) > 1 and parts[1] in ["on", "off"]:
+                        voice_mode = (parts[1] == "on")
+                        print(f"語音識別模式已{'啟用' if voice_mode else '停用'}!")
+                    continue
+                elif command.lower().startswith("sleep "):
+                    parts = command.lower().split()
+                    if len(parts) > 1 and parts[1] in ["on", "off"]:
+                        sleep_mode = (parts[1] == "on")
+                        msg = "進入休眠模式" if sleep_mode else "退出休眠模式"
+                        print(msg)
+                        if sleep_mode:
+                            generate_speech("好的，我去休息了，需要我時叫我一聲。")
+                        else:
+                            generate_speech("我在這裡，有什麼需要我幫忙的嗎？")
+                    continue
                     
-                    await process_chat_input(
-                        command, 
-                        emotion_system, 
-                        multimodal_system, 
-                        context_system, 
-                        preference_tracker
-                    )
+                # 處理對話
+                print(f"處理聊天輸入: '{command}'")
+                
+                # 保存用戶消息
+                user_exchange = {"user": command}
+                await async_save_short_term_memory(user_exchange)
+                
+                # 處理聊天輸入
+                await process_chat_input(
+                    command, 
+                    emotion_system, 
+                    multimodal_system, 
+                    context_system, 
+                    preference_tracker
+                )
             
             except asyncio.CancelledError:
                 break
                 
             except Exception as e:
-                print(f"处理输入时出错: {e}")
+                print(f"處理輸入時出錯: {e}")
                 traceback.print_exc()
                 continue
         
@@ -3281,9 +3529,15 @@ async def main_async():
         
     finally:
         # 确保所有任务都被取消
+        print("正在清理资源...")
         for task in tasks:
             if not task.done():
                 task.cancel()
+        
+        # 等待线程完成，但设置超时以防止卡住
+        for thread in threads:
+            if thread.is_alive():
+                thread.join(timeout=2.0)  # 最多等待2秒
 
 async def extract_calendar_events_from_text(text, calendar_system):
     """从文本中提取可能的日历事件并添加到日历
